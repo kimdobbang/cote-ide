@@ -1311,7 +1311,7 @@ const store = {
   set(k, v) { try { localStorage.setItem("cote:" + k, JSON.stringify(v)); } catch {} },
 };
 
-let lang = store.get("lang", "python");
+let lang = store.get("lang", "java");
 let mode = store.get("mode", "func");
 let editor = null, setupEditor = null, models = {}, monacoRef = null;
 const isFunc = () => lang !== "sql" && mode === "func";
