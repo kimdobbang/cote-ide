@@ -122,6 +122,23 @@
   footer .grow { flex: 1; }
   .hint { font-size: 12px; color: var(--muted); }
 
+  /* 메모장: 가운데 팝업(배경 어둡게) 또는 띄워두기(작업하면서 옆에 둠, 끌어서 이동·크기 조절) */
+  [hidden] { display: none !important; }
+  .memo-backdrop { position: fixed; inset: 0; z-index: 39; background: rgba(5, 10, 18, .55); }
+  .memo { position: fixed; z-index: 40; display: flex; flex-direction: column; overflow: hidden; resize: both;
+    min-width: 260px; min-height: 160px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+  .memo.popup { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(620px, calc(100vw - 32px)); height: min(460px, calc(100vh - 120px)); resize: none; }
+  .memo-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid var(--border);
+    font-size: 13px; user-select: none; }
+  .memo.pinned .memo-head { cursor: move; }
+  .memo-title { font-weight: 700; }
+  .memo-head .grow { flex: 1; }
+  .memo-x { background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .memo-x:hover { color: var(--text); background: var(--editor); }
+  #memoText { flex: 1; resize: none; border: 0; outline: 0; padding: 12px 14px; background: var(--bg); font: 13px/1.6 var(--mono); }
+  #memoBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   @media (max-width: 860px) {
     main { flex-direction: column; }
     #left { flex: 0 0 auto; max-height: 30vh; }
@@ -164,6 +181,7 @@
   <button class="btn sm" id="bojPasteBtn" title="백준 문제 페이지를 복사해 붙여넣으면 문제와 예제를 채웁니다">백준 문제 붙여넣기</button>
   <div class="sep"></div>
   <input id="title" placeholder="문제 제목" spellcheck="false">
+  <button class="btn sm" id="memoBtn" title="메모장 열기/닫기 (Alt+M)">메모</button>
   <div class="timer">
     <span class="label hint">시험 시간</span>
     <input id="minutes" type="number" min="1" max="600" value="120"><span class="hint">분</span>
@@ -232,6 +250,18 @@
   <button class="btn" id="runBtn">코드 실행</button>
   <button class="btn primary" id="submitBtn">제출 후 채점하기</button>
 </footer>
+
+<div class="memo-backdrop" id="memoBackdrop" hidden></div>
+<section class="memo" id="memo" hidden aria-label="메모장">
+  <div class="memo-head" id="memoHead">
+    <span class="memo-title">메모</span>
+    <span class="hint" id="memoInfo"></span>
+    <span class="grow"></span>
+    <button class="btn sm" id="memoPin"></button>
+    <button class="memo-x" id="memoClose" title="닫기 (Esc)" aria-label="메모 닫기">×</button>
+  </div>
+  <textarea id="memoText" spellcheck="false" placeholder="풀이 아이디어, 시간 복잡도 계산, 반례 등을 적어 두세요. 입력하는 대로 이 브라우저에 저장됩니다."></textarea>
+</section>
 
 
 <div class="ask" id="bojPaste" hidden>
@@ -387,8 +417,8 @@ final class CoteFmt {
           case 'd': body = num(String.valueOf(v), fl, width); break;
           case 'f': {
             double d = ((Number) v).doubleValue();
-            String t = new java.math.BigDecimal(Double.toString(Math.abs(d))).setScale(prec < 0 ? 6 : prec, java.math.RoundingMode.HALF_UP).toPlainString();
-            body = num((d < 0 || (d == 0 && 1 / d < 0)) && !isZero(t) ? "-" + t : t, fl, width); break;
+            String t = Double.isNaN(d) || Double.isInfinite(d) ? String.valueOf(Math.abs(d)) : fixed(Math.abs(d), prec < 0 ? 6 : prec);
+            body = num(d < 0 || (d == 0 && 1 / d < 0) ? "-" + t : t, fl, width); break;
           }
           case 's': case 'S': body = String.valueOf(v); if (prec >= 0 && body.length() > prec) body = body.substring(0, prec); if (conv == 'S') body = body.toUpperCase(); break;
           case 'c': body = v instanceof Number ? String.valueOf((char) ((Number) v).intValue()) : String.valueOf(v); break;
@@ -407,7 +437,29 @@ final class CoteFmt {
     }
     return sb.toString();
   }
-  private static boolean isZero(String t) { for (int i = 0; i < t.length(); i++) { char c = t.charAt(i); if (c != '0' && c != '.') return false; } return true; }
+  // %.Nf: Java처럼 Double.toString의 십진 표기를 HALF_UP으로 반올림 (BigDecimal은 컴파일 시간을 크게 늘려서 직접 구현)
+  static String fixed(double v, int p) {
+    String s = Double.toString(v);
+    int e = s.indexOf('E');
+    String mant = e < 0 ? s : s.substring(0, e);
+    int exp = e < 0 ? 0 : Integer.parseInt(s.substring(e + 1));
+    int dot = mant.indexOf('.');
+    StringBuilder dg = new StringBuilder(mant.substring(0, dot)).append(mant.substring(dot + 1));
+    int point = dot + exp;
+    while (point <= 0) { dg.insert(0, '0'); point++; }
+    while (dg.length() < point + p + 1) dg.append('0');
+    boolean up = dg.charAt(point + p) >= '5';
+    dg.setLength(point + p);
+    if (up) {
+      int i = dg.length() - 1;
+      while (i >= 0 && dg.charAt(i) == '9') { dg.setCharAt(i, '0'); i--; }
+      if (i >= 0) dg.setCharAt(i, (char) (dg.charAt(i) + 1)); else { dg.insert(0, '1'); point++; }
+    }
+    int z = 0;
+    while (z < point - 1 && dg.charAt(z) == '0') z++;
+    String ip = dg.substring(z, point);
+    return p > 0 ? ip + "." + dg.substring(point) : ip;
+  }
   private static String num(String t, String fl, int width) {
     String sign = "";
     if (t.startsWith("-")) { sign = "-"; t = t.substring(1); }
@@ -826,9 +878,30 @@ ${branches.join("\n")}
     return { status: "OK", cases: out };
   }
 
+  // Java 컴파일러는 처음 몇 번이 느리므로, Java를 고르면 자주 쓰는 클래스를 담은 작은 코드를 미리 한 번 컴파일해 둔다
+  const WARM_JAVA = `import java.io.*;
+import java.util.*;
+public class Main {
+  public static void main(String[] args) throws IOException {
+    BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+    StringTokenizer st = new StringTokenizer("1 2");
+    List<Integer> list = new ArrayList<>(); Map<String, Integer> map = new HashMap<>(); Deque<Integer> dq = new ArrayDeque<>();
+    PriorityQueue<Integer> pq = new PriorityQueue<>(); StringBuilder sb = new StringBuilder();
+    list.add(Integer.parseInt(st.nextToken())); map.put("a", 1); dq.add(1); pq.add(1); Collections.sort(list);
+    for (Map.Entry<String, Integer> e : map.entrySet()) sb.append(e.getKey());
+    System.out.println(sb.append(list).append(dq).append(pq.poll()).append(Arrays.toString(new int[]{1})));
+  }
+}`;
+  let warmedJava = false;
   function warm(lang) {
     const lane = lang === "python" ? py : lang === "sql" ? sql : lang === "java" ? jc : null;
-    if (lane) lane.ensure().catch(() => {});
+    if (!lane) return;
+    const ready = lane.ensure();
+    ready.catch(() => {});
+    if (lang === "java" && !warmedJava) {
+      warmedJava = true;
+      ready.then(() => runStdin("java", WARM_JAVA, "")).catch(() => {});
+    }
   }
   return { runStdin, runSql, judge, warm, status, get lastSource() { return lastSource; }, set onStatus(fn) { onStatus = fn; } };
 })();
@@ -1440,6 +1513,68 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); e.shiftKey ? submit() : run(); }
 });
 
+// ---------- 메모장 ----------
+// 팝업: 가운데에 띄우고 배경을 어둡게 (바깥 클릭·Esc로 닫힘)
+// 띄워두기: 배경 없이 떠 있어 코드를 쓰면서 볼 수 있음 (머리줄을 끌어 이동, 오른쪽 아래 모서리로 크기 조절)
+const memo = {
+  open: false,
+  pinned: store.get("memoPinned", false),
+  show(v) {
+    this.open = v;
+    $("memo").hidden = !v; $("memoBtn").classList.toggle("on", v);
+    $("memoBackdrop").hidden = !v || this.pinned;
+    if (v) { this.layout(); $("memoText").focus(); }
+  },
+  layout() {
+    const m = $("memo");
+    m.classList.toggle("pinned", this.pinned); m.classList.toggle("popup", !this.pinned);
+    $("memoPin").textContent = this.pinned ? "가운데로" : "띄워두기";
+    $("memoPin").title = this.pinned ? "가운데 팝업으로 보기" : "코드를 쓰면서 볼 수 있게 띄워두기 (끌어서 이동)";
+    $("memoBackdrop").hidden = !this.open || this.pinned;
+    if (!this.pinned) { m.style.left = m.style.top = m.style.width = m.style.height = ""; return; }
+    const r = store.get("memoRect", { w: 360, h: 300, x: window.innerWidth - 384, y: window.innerHeight - 380 });
+    const w = Math.min(r.w, window.innerWidth - 16), h = Math.min(r.h, window.innerHeight - 16);
+    m.style.width = w + "px"; m.style.height = h + "px";
+    m.style.left = Math.max(8, Math.min(r.x, window.innerWidth - w - 8)) + "px";
+    m.style.top = Math.max(8, Math.min(r.y, window.innerHeight - h - 8)) + "px";
+  },
+  save() {
+    if (!this.pinned || !this.open) return;
+    const b = $("memo").getBoundingClientRect();
+    store.set("memoRect", { w: Math.round(b.width), h: Math.round(b.height), x: Math.round(b.left), y: Math.round(b.top) });
+  },
+};
+const memoInfo = () => { const n = $("memoText").value.length; $("memoInfo").textContent = n ? `${n}자 · 자동 저장` : "자동 저장"; };
+$("memoText").value = store.get("memo", "");
+memoInfo();
+$("memoText").addEventListener("input", () => { store.set("memo", $("memoText").value); memoInfo(); });
+$("memoBtn").onclick = () => memo.show(!memo.open);
+$("memoClose").onclick = () => memo.show(false);
+$("memoBackdrop").onclick = () => memo.show(false);
+$("memoPin").onclick = () => { memo.pinned = !memo.pinned; store.set("memoPinned", memo.pinned); memo.layout(); $("memoText").focus(); };
+document.addEventListener("keydown", (e) => {
+  if (e.altKey && e.code === "KeyM") { e.preventDefault(); memo.show(!memo.open); }
+  else if (e.key === "Escape" && memo.open && (!memo.pinned || $("memo").contains(document.activeElement))) memo.show(false);
+});
+// 띄워두기 상태에서 머리줄을 끌어 옮긴다
+(() => {
+  let drag = null;
+  $("memoHead").addEventListener("mousedown", (e) => {
+    if (!memo.pinned || e.target.closest("button")) return;
+    const b = $("memo").getBoundingClientRect();
+    drag = { dx: e.clientX - b.left, dy: e.clientY - b.top }; document.body.style.userSelect = "none";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const m = $("memo"), b = m.getBoundingClientRect();
+    m.style.left = Math.max(0, Math.min(e.clientX - drag.dx, window.innerWidth - b.width)) + "px";
+    m.style.top = Math.max(0, Math.min(e.clientY - drag.dy, window.innerHeight - b.height)) + "px";
+  });
+  window.addEventListener("mouseup", () => { if (drag) { drag = null; document.body.style.userSelect = ""; memo.save(); } });
+  new ResizeObserver(() => memo.save()).observe($("memo"));
+  window.addEventListener("resize", () => { if (memo.open) memo.layout(); });
+})();
+
 // 패널 크기 조절 (좌우, 위아래)
 function splitter(gutter, target, axis, key, min, max) {
   let drag = false;
@@ -1531,6 +1666,31 @@ function bojPasteText(p) {
   return parts.join("\n\n");
 }
 
+// 복사한 페이지의 HTML에는 위첨자·아래첨자가 남아 있으므로, 붙여넣을 때 HTML을 글로 바꾸며 10<sup>6</sup> → 10^6 으로 살린다
+function htmlToText(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");  // 여기서는 스크립트가 실행되지 않는다
+  doc.querySelectorAll("script, style, noscript, iframe, object, embed, link, meta, svg, canvas").forEach((n) => n.remove());
+  doc.querySelectorAll("img").forEach((n) => n.replaceWith("[그림]"));
+  doc.querySelectorAll("sup").forEach((n) => n.replaceWith("^" + (n.textContent.length > 1 ? `(${n.textContent})` : n.textContent)));
+  doc.querySelectorAll("sub").forEach((n) => n.replaceWith("_" + (n.textContent.length > 1 ? `(${n.textContent})` : n.textContent)));
+  // 속성(이벤트 처리기 포함)을 모두 지운 뒤 화면 밖에 잠깐 붙여 줄바꿈·표 칸을 살린 글을 얻는다
+  doc.body.querySelectorAll("*").forEach((n) => { for (const a of [...n.attributes]) n.removeAttribute(a.name); });
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;left:-99999px;top:0;width:900px;white-space:normal";
+  box.append(...[...doc.body.childNodes].map((n) => document.importNode(n, true)));
+  document.body.appendChild(box);
+  const text = box.innerText;
+  box.remove();
+  return text;
+}
+$("bojPasteText").addEventListener("paste", (e) => {
+  const html = e.clipboardData && e.clipboardData.getData("text/html");
+  if (!html || !/<(sup|sub)\b/i.test(html)) return;  // 첨자가 없으면 브라우저 기본 붙여넣기
+  e.preventDefault();
+  const ta = e.target, text = htmlToText(html);
+  ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, "end");
+});
+
 $("bojPasteBtn").onclick = () => {
   $("bojPasteText").value = ""; $("bojPasteId").value = ""; $("bojPasteMsg").textContent = "";
   $("bojPaste").hidden = false; $("bojPasteText").focus();
@@ -1560,6 +1720,11 @@ $("bojPasteOk").onclick = async () => {
   refresh(); showPane("tc");
 };
 
+
+// 실행 환경 파일을 브라우저에 저장해 두는 서비스 워커 (두 번째 방문부터 빠르게, 인터넷이 끊겨도 동작)
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 // Monaco 로드: cdnjs (스타일은 페이지에 넣어 두었으므로 편집기 쪽 스타일 불러오기는 끈다)
 (() => {
   const BASE = "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs";
