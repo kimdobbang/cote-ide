@@ -571,6 +571,285 @@ final class CoteJson {
   }
 }`;
 
+  // web/CoteHashMap.java 내용 (build.py가 빌드할 때 넣는다)
+  const SHIM_HASHMAP = `\n// 진짜 JDK(OpenJDK 8+) java.util.HashMap / HashSet과 같은 순서로 꺼내지는 HashMap·HashSet.
+// 브라우저용 Java(TeaVM)의 HashMap은 내부 구현이 달라 출력 순서가 JDK와 다르기 때문에, 웹 버전에서
+// 사용자 코드의 HashMap / HashSet을 이 클래스로 바꿔 실행한다. (runtime.js가 이 파일 내용을 그대로 붙인다)
+// 같게 맞춘 규칙: 해시 섞기 h ^ (h >>> 16), 칸 수 2의 거듭제곱(기본 16), 부하율 0.75,
+// 같은 칸 안에서는 넣은 순서, 늘릴 때 각 칸을 lo/hi로 나누며 순서 유지.
+final class CoteHashMap<K, V> extends java.util.AbstractMap<K, V> {
+  static final class Node<K, V> implements java.util.Map.Entry<K, V> {
+    final int hash; final K key; V value; Node<K, V> next;
+    Node(int hash, K key, V value, Node<K, V> next) { this.hash = hash; this.key = key; this.value = value; this.next = next; }
+    public K getKey() { return key; }
+    public V getValue() { return value; }
+    public V setValue(V v) { V old = value; value = v; return old; }
+    public boolean equals(Object o) {
+      if (!(o instanceof java.util.Map.Entry)) return false;
+      java.util.Map.Entry<?, ?> e = (java.util.Map.Entry<?, ?>) o;
+      return java.util.Objects.equals(key, e.getKey()) && java.util.Objects.equals(value, e.getValue());
+    }
+    public int hashCode() { return java.util.Objects.hashCode(key) ^ java.util.Objects.hashCode(value); }
+    public String toString() { return key + "=" + value; }
+  }
+
+  // 칸 배열은 Object[]에 담고 꺼낼 때 n()으로 형변환한다
+  // (경고를 끄는 주석은 브라우저용 javac를 멈추게 하므로 쓰지 않는다)
+  Object[] table; int size, threshold, modCount;
+  Node<K, V> n(Object o) { return (Node<K, V>) o; }
+  final float loadFactor;
+
+  static int hash(Object key) { int h; return key == null ? 0 : (h = key.hashCode()) ^ (h >>> 16); }
+  static int tableSizeFor(int cap) { int n = -1 >>> Integer.numberOfLeadingZeros(cap - 1); return n < 0 ? 1 : n >= (1 << 30) ? (1 << 30) : n + 1; }
+
+  CoteHashMap() { loadFactor = 0.75f; }
+  CoteHashMap(int initialCapacity) { this(initialCapacity, 0.75f); }
+  CoteHashMap(int initialCapacity, float loadFactor) {
+    if (initialCapacity < 0) throw new IllegalArgumentException("Illegal initial capacity: " + initialCapacity);
+    this.loadFactor = loadFactor; this.threshold = tableSizeFor(Math.min(initialCapacity, 1 << 30));
+  }
+  CoteHashMap(java.util.Map<? extends K, ? extends V> m) { loadFactor = 0.75f; putMapEntries(m); }
+
+  void putMapEntries(java.util.Map<? extends K, ? extends V> m) {
+    int s = m.size();
+    if (s <= 0) return;
+    if (table == null) {  // JDK 19+ 방식
+      double dt = Math.ceil(s / (double) loadFactor);
+      int t = dt < (double) (1 << 30) ? (int) dt : (1 << 30);
+      if (t > threshold) threshold = tableSizeFor(t);
+    } else {
+      while (s > threshold && table.length < (1 << 30)) resize();
+    }
+    for (java.util.Map.Entry<? extends K, ? extends V> e : m.entrySet()) putVal(hash(e.getKey()), e.getKey(), e.getValue(), false);
+  }
+
+  Object[] resize() {
+    Object[] oldTab = table;
+    int oldCap = oldTab == null ? 0 : oldTab.length, oldThr = threshold, newCap, newThr = 0;
+    if (oldCap > 0) {
+      if (oldCap >= (1 << 30)) { threshold = Integer.MAX_VALUE; return oldTab; }
+      newCap = oldCap << 1;
+      if (newCap < (1 << 30) && oldCap >= 16) newThr = oldThr << 1;
+    } else if (oldThr > 0) newCap = oldThr;
+    else { newCap = 16; newThr = 12; }
+    if (newThr == 0) { float ft = (float) newCap * loadFactor; newThr = newCap < (1 << 30) && ft < (float) (1 << 30) ? (int) ft : Integer.MAX_VALUE; }
+    threshold = newThr;
+    Object[] newTab = new Object[newCap];
+    table = newTab;
+    if (oldTab != null) {
+      for (int j = 0; j < oldCap; ++j) {
+        Node<K, V> e = n(oldTab[j]);
+        if (e == null) continue;
+        oldTab[j] = null;
+        if (e.next == null) { newTab[e.hash & (newCap - 1)] = e; continue; }
+        Node<K, V> loHead = null, loTail = null, hiHead = null, hiTail = null, next;
+        do {
+          next = e.next;
+          if ((e.hash & oldCap) == 0) { if (loTail == null) loHead = e; else loTail.next = e; loTail = e; }
+          else { if (hiTail == null) hiHead = e; else hiTail.next = e; hiTail = e; }
+        } while ((e = next) != null);
+        if (loTail != null) { loTail.next = null; newTab[j] = loHead; }
+        if (hiTail != null) { hiTail.next = null; newTab[j + oldCap] = hiHead; }
+      }
+    }
+    return newTab;
+  }
+
+  V putVal(int hash, K key, V value, boolean onlyIfAbsent) {
+    Object[] tab = table;
+    if (tab == null || tab.length == 0) tab = resize();
+    int i = (tab.length - 1) & hash;
+    Node<K, V> p = n(tab[i]);
+    if (p == null) tab[i] = new Node<>(hash, key, value, null);
+    else {
+      Node<K, V> e = null;
+      if (p.hash == hash && java.util.Objects.equals(p.key, key)) e = p;
+      else {
+        for (int binCount = 0; ; ++binCount) {
+          if ((e = p.next) == null) {
+            p.next = new Node<>(hash, key, value, null);
+            // JDK: 한 칸에 9개 이상 몰리면 칸 수가 64 미만일 때는 트리로 바꾸는 대신 칸 수를 늘린다
+            // (64 이상에서 트리로 바뀐 칸은 순서까지 맞추지 않는다 — 해시가 크게 몰릴 때만 생긴다)
+            if (binCount >= 7 && tab.length < 64) resize();
+            break;
+          }
+          if (e.hash == hash && java.util.Objects.equals(e.key, key)) break;
+          p = e;
+        }
+      }
+      if (e != null) { V old = e.value; if (!onlyIfAbsent || old == null) e.value = value; return old; }
+    }
+    ++modCount;
+    if (++size > threshold) resize();
+    return null;
+  }
+
+  Node<K, V> getNode(Object key) {
+    Object[] tab = table;
+    if (tab == null || tab.length == 0) return null;
+    int h = hash(key);
+    for (Node<K, V> e = n(tab[(tab.length - 1) & h]); e != null; e = e.next)
+      if (e.hash == h && java.util.Objects.equals(e.key, key)) return e;
+    return null;
+  }
+
+  Node<K, V> removeNode(Object key) {
+    Object[] tab = table;
+    if (tab == null || tab.length == 0) return null;
+    int h = hash(key), i = (tab.length - 1) & h;
+    Node<K, V> prev = null;
+    for (Node<K, V> e = n(tab[i]); e != null; prev = e, e = e.next) {
+      if (e.hash == h && java.util.Objects.equals(e.key, key)) {
+        if (prev == null) tab[i] = e.next; else prev.next = e.next;
+        ++modCount; --size;
+        return e;
+      }
+    }
+    return null;
+  }
+
+  public int size() { return size; }
+  public boolean isEmpty() { return size == 0; }
+  public V get(Object key) { Node<K, V> e = getNode(key); return e == null ? null : e.value; }
+  public boolean containsKey(Object key) { return getNode(key) != null; }
+  public V put(K key, V value) { return putVal(hash(key), key, value, false); }
+  public V putIfAbsent(K key, V value) { return putVal(hash(key), key, value, true); }
+  public void putAll(java.util.Map<? extends K, ? extends V> m) { putMapEntries(m); }
+  public V remove(Object key) { Node<K, V> e = removeNode(key); return e == null ? null : e.value; }
+  public void clear() { if (table != null && size > 0) { ++modCount; size = 0; for (int i = 0; i < table.length; i++) table[i] = null; } }
+  public V getOrDefault(Object key, V def) { Node<K, V> e = getNode(key); return e == null ? def : e.value; }
+
+  // JDK의 merge / compute / computeIfAbsent는 put과 달리, 늘릴지 먼저 확인한 뒤 새 항목을 칸의 "맨 앞"에 넣는다
+  private int binCount;
+  private Node<K, V> findForCompute(int hash, Object key) {
+    if (size > threshold || table == null || table.length == 0) resize();
+    binCount = 0;
+    for (Node<K, V> e = n(table[(table.length - 1) & hash]); e != null; e = e.next) {
+      if (e.hash == hash && java.util.Objects.equals(e.key, key)) return e;
+      ++binCount;
+    }
+    return null;
+  }
+  private void insertFirst(int hash, K key, V value) {
+    int i = (table.length - 1) & hash;
+    table[i] = new Node<>(hash, key, value, n(table[i]));
+    if (binCount >= 7 && table.length < 64) resize();
+    ++modCount; ++size;
+  }
+  public V computeIfAbsent(K key, java.util.function.Function<? super K, ? extends V> fn) {
+    int h = hash(key);
+    Node<K, V> old = findForCompute(h, key);
+    if (old != null && old.value != null) return old.value;
+    int mc = modCount;
+    V v = fn.apply(key);
+    if (mc != modCount) throw new java.util.ConcurrentModificationException();
+    if (v == null) return null;
+    if (old != null) { old.value = v; return v; }
+    insertFirst(h, key, v);
+    return v;
+  }
+  public V compute(K key, java.util.function.BiFunction<? super K, ? super V, ? extends V> fn) {
+    int h = hash(key);
+    Node<K, V> old = findForCompute(h, key);
+    int mc = modCount;
+    V v = fn.apply(key, old == null ? null : old.value);
+    if (mc != modCount) throw new java.util.ConcurrentModificationException();
+    if (old != null) { if (v != null) old.value = v; else removeNode(key); }
+    else if (v != null) insertFirst(h, key, v);
+    return v;
+  }
+  public V merge(K key, V value, java.util.function.BiFunction<? super V, ? super V, ? extends V> fn) {
+    if (value == null || fn == null) throw new NullPointerException();
+    int h = hash(key);
+    Node<K, V> old = findForCompute(h, key);
+    if (old != null) {
+      V v;
+      if (old.value != null) {
+        int mc = modCount;
+        v = fn.apply(old.value, value);
+        if (mc != modCount) throw new java.util.ConcurrentModificationException();
+      } else v = value;
+      if (v != null) old.value = v; else removeNode(key);
+      return v;
+    }
+    insertFirst(h, key, value);
+    return value;
+  }
+  public V computeIfPresent(K key, java.util.function.BiFunction<? super K, ? super V, ? extends V> fn) {
+    Node<K, V> e = getNode(key);
+    if (e == null || e.value == null) return null;
+    int mc = modCount;
+    V v = fn.apply(key, e.value);
+    if (mc != modCount) throw new java.util.ConcurrentModificationException();
+    if (v != null) { e.value = v; return v; }
+    removeNode(key);
+    return null;
+  }
+  public boolean containsValue(Object value) {
+    if (table != null) for (Object o : table) for (Node<K, V> e = n(o); e != null; e = e.next) if (java.util.Objects.equals(e.value, value)) return true;
+    return false;
+  }
+
+  public java.util.Set<java.util.Map.Entry<K, V>> entrySet() {
+    return new java.util.AbstractSet<java.util.Map.Entry<K, V>>() {
+      public int size() { return size; }
+      public void clear() { CoteHashMap.this.clear(); }
+      public java.util.Iterator<java.util.Map.Entry<K, V>> iterator() { return new EntryIterator(); }
+      public boolean contains(Object o) {
+        if (!(o instanceof java.util.Map.Entry)) return false;
+        java.util.Map.Entry<?, ?> e = (java.util.Map.Entry<?, ?>) o;
+        Node<K, V> n = getNode(e.getKey());
+        return n != null && n.equals(e);
+      }
+      public boolean remove(Object o) {
+        if (!contains(o)) return false;
+        removeNode(((java.util.Map.Entry<?, ?>) o).getKey());
+        return true;
+      }
+    };
+  }
+
+  final class EntryIterator implements java.util.Iterator<java.util.Map.Entry<K, V>> {
+    Node<K, V> next, current; int index, expected = modCount;
+    EntryIterator() { advanceFrom(0); }
+    void advanceFrom(int i) {
+      next = null;
+      if (table == null) return;
+      for (index = i; index < table.length; index++) if ((next = n(table[index])) != null) { index++; return; }
+    }
+    public boolean hasNext() { return next != null; }
+    public java.util.Map.Entry<K, V> next() {
+      if (modCount != expected) throw new java.util.ConcurrentModificationException();
+      Node<K, V> e = next;
+      if (e == null) throw new java.util.NoSuchElementException();
+      current = e;
+      if (e.next != null) next = e.next; else advanceFrom(index);
+      return e;
+    }
+    public void remove() {
+      if (current == null) throw new IllegalStateException();
+      if (modCount != expected) throw new java.util.ConcurrentModificationException();
+      removeNode(current.key); current = null; expected = modCount;
+    }
+  }
+}
+
+final class CoteHashSet<E> extends java.util.AbstractSet<E> {
+  private static final Object PRESENT = new Object();
+  private final CoteHashMap<E, Object> map;
+  CoteHashSet() { map = new CoteHashMap<>(); }
+  CoteHashSet(int initialCapacity) { map = new CoteHashMap<>(initialCapacity); }
+  CoteHashSet(int initialCapacity, float loadFactor) { map = new CoteHashMap<>(initialCapacity, loadFactor); }
+  CoteHashSet(java.util.Collection<? extends E> c) { map = new CoteHashMap<>((int) Math.ceil(Math.max(c.size(), 12) / 0.75)); addAll(c); }  // JDK 19+ 방식
+  public java.util.Iterator<E> iterator() { return map.keySet().iterator(); }
+  public int size() { return map.size(); }
+  public boolean isEmpty() { return map.isEmpty(); }
+  public boolean contains(Object o) { return map.containsKey(o); }
+  public boolean add(E e) { return map.put(e, PRESENT) == null; }
+  public boolean remove(Object o) { return map.remove(o) == PRESENT; }
+  public void clear() { map.clear(); }
+}
+\n`;
   const SHIM_PARTS = Object.fromEntries(SHIM_IO.split(/\n(?=final class )/).filter((t) => t.trim())
     .map((t) => [t.match(/final class (\w+)/)[1], "\n" + t.trim() + "\n"]));
 
@@ -615,6 +894,8 @@ final class CoteJson {
   function adapt(src) {
     const st = { s: src, m: mask(src) };
     sub(st, /^\s*package\s+[\w.]+\s*;/m, "");
+    // 경고를 끄는 주석(SuppressWarnings)은 브라우저용 javac를 멈추게 한다. 실행 결과와는 무관해서 지운다
+    sub(st, /@\s*(?:java\.lang\.)?SuppressWarnings\s*\((?:[^()]|\([^()]*\))*\)/g, "");
     // printf(...) → print(CoteFmt.format(...))
     const pf = []; const re = /\.\s*printf\s*\(/g; let x;
     while ((x = re.exec(st.m))) { const open = x.index + x[0].length - 1; const close = closeParen(st.m, open); if (close > 0) pf.push([x.index, open, close]); }
@@ -632,6 +913,10 @@ final class CoteJson {
     sub(st, /\bSystem\s*\.\s*exit\s*\(/g, "CoteIO.exit(");
     sub(st, /\b(?:Integer|Long)\s*::\s*sum\b/g, "CoteMath::sum");
     sub(st, /\b(?:Integer|Long)\s*\.\s*sum\s*\(/g, "CoteMath.sum(");
+    // TeaVM의 HashMap·HashSet은 꺼내는 순서가 진짜 JDK와 달라서, JDK와 같은 순서의 구현(CoteHashMap.java)으로 바꾼다
+    sub(st, /^[ \t]*import\s+java\.util\.(?:HashMap|HashSet)\s*;/gm, "");
+    sub(st, /\b(?:java\.util\.)?HashMap\b/g, "CoteHashMap");
+    sub(st, /\b(?:java\.util\.)?HashSet\b/g, "CoteHashSet");
     sub(st, /new\s+java\.util\.Scanner\s*\(/g, "new Scanner(");
     sub(st, /^[ \t]*import\s+java\.util\.Scanner\s*;/m, "");
     const mainAt = st.m.search(/\bstatic\s+void\s+main\s*\(/);
@@ -644,6 +929,7 @@ final class CoteJson {
     if (/\bCoteMath\b/.test(st.m)) tail += part("CoteMath");
     if (/\bCoteFmt\b/.test(st.m)) tail += part("CoteFmt");
     if (/\bScanner\b/.test(st.m)) tail += SHIM_SCANNER;
+    if (/\bCoteHash(?:Map|Set)\b/.test(st.m)) tail += SHIM_HASHMAP;
     return { code: st.s, masked: st.m, tail, mainCls };
   }
 
