@@ -1,7 +1,7 @@
 // Cote IDE 서비스 워커: 한 번 받은 실행 환경(Python·Java·SQLite)과 편집기 파일을 저장해 두고
 // 다음 방문부터 바로 쓴다. 페이지(index.html)는 항상 새로 받고, 인터넷이 없을 때만 저장본을 쓴다.
 // 사이트를 다시 빌드하면 CACHE 이름이 바뀌어 예전 저장본은 지워진다.
-const CACHE = "cote-0551c877188c";
+const CACHE = "cote-dfea6e729f58";
 const RUNTIME = /\/(py|java|sql)\/[^/]+$/;
 const CDN = /^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/(monaco-editor|sql\.js)\/[\d.]+\//;
 

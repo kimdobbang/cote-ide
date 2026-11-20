@@ -139,6 +139,28 @@
   #memoText { flex: 1; resize: none; border: 0; outline: 0; padding: 12px 14px; background: var(--bg); font: 13px/1.6 var(--mono); }
   #memoBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+  /* solved.ac (로컬 전용): 문제 티어·분류, 랜덤 문제 */
+  .sac-info { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+  .tier { font-weight: 700; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .tier.b { color: #d48a4a; } .tier.s { color: #9fb4c9; } .tier.g { color: #f2b233; }
+  .tier.p { color: #3fe0ae; } .tier.d { color: #3dbcf5; } .tier.r { color: #ff4f86; } .tier.u { color: var(--muted); }
+  .sac-tags { color: var(--text); font-size: 12px; }
+  .dlg-back { position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(5, 10, 18, .6); }
+  .dlg-card { width: min(520px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+  .dlg-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--border); }
+  .dlg-head .grow { flex: 1; }
+  .sac-profile { padding: 10px 16px 0; font-size: 13px; color: var(--muted); min-height: 18px; }
+  .sac-form { display: grid; gap: 10px; padding: 12px 16px; }
+  .sac-form label { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .sac-form input:not([type=checkbox]) { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; outline: none; min-width: 0; }
+  .sac-form input:focus { border-color: var(--accent); }
+  .sac-range { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .sac-range select { flex: 1; min-width: 0; }
+  .sac-checks { display: flex; gap: 16px; padding-left: 92px; flex-wrap: wrap; }
+  .sac-checks label { display: flex; gap: 6px; grid-template-columns: none; color: var(--text); }
+  .sac-result { margin: 0 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-size: 13px; min-height: 42px; }
+  .dlg-row { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px 16px; }
+
   @media (max-width: 860px) {
     main { flex-direction: column; }
     #left { flex: 0 0 auto; max-height: 30vh; }
@@ -165,6 +187,8 @@
   .ask-row { display: flex; justify-content: flex-end; gap: 8px; }
   .web-note { font-size: 12px; color: var(--muted); padding: 8px 16px; border-top: 1px solid var(--border); }
   @media (max-width: 860px) { #footHint { display: none; } }
+
+  .sac-only { display: none !important; }
 </style>
 <style>/*!-----------------------------------------------------------
  * Copyright (c) Microsoft Corporation. All rights reserved.
@@ -179,6 +203,7 @@
   <div class="logo">cote<span>.</span>ide</div>
   <div class="sep"></div>
   <button class="btn sm" id="bojPasteBtn" title="백준 문제 페이지를 복사해 붙여넣으면 문제와 예제를 채웁니다">백준 문제 붙여넣기</button>
+  <button class="btn sm sac-only" id="sacBtn" type="button" hidden title="solved.ac 조건으로 백준 문제를 무작위로 골라 불러옵니다">랜덤 문제</button>
   <div class="sep"></div>
   <input id="title" placeholder="문제 제목" spellcheck="false">
   <button class="btn sm" id="memoBtn" title="메모장 열기/닫기 (Alt+M)">메모</button>
@@ -192,7 +217,7 @@
 
 <main id="main">
   <section id="left">
-    <div class="head">문제 설명</div>
+    <div class="head"><span>문제 설명</span><span class="grow"></span><span class="sac-only sac-info" id="sacInfo"></span></div>
     <textarea id="problem" spellcheck="false" placeholder="문제 설명, 제한사항, 입출력 예를 여기에 붙여넣으세요."></textarea>
     <div class="web-note">브라우저 전용 버전입니다. 코드는 이 브라우저 안에서만 실행되고, 작성한 내용은 이 브라우저에만 저장됩니다.</div>
     <div id="schemaBox">
@@ -250,6 +275,26 @@
   <button class="btn" id="runBtn">코드 실행</button>
   <button class="btn primary" id="submitBtn">제출 후 채점하기</button>
 </footer>
+
+<div class="dlg-back sac-only" id="sacBox" hidden>
+  <div class="dlg-card" role="dialog" aria-modal="true" aria-labelledby="sacTitle">
+    <div class="dlg-head"><b id="sacTitle">랜덤 문제 뽑기</b><span class="hint">solved.ac</span><span class="grow"></span>
+      <button class="memo-x" id="sacClose" aria-label="닫기">×</button></div>
+    <div class="sac-profile" id="sacProfile"></div>
+    <div class="sac-form">
+      <label>난이도 <span class="sac-range"><select id="sacFrom"></select> ~ <select id="sacTo"></select></span></label>
+      <label>알고리즘 <input id="sacTag" list="sacTags" placeholder="예: 다이나믹 프로그래밍 (비우면 전체)" spellcheck="false"></label>
+      <datalist id="sacTags"></datalist>
+      <label>백준 아이디 <input id="sacHandle" placeholder="안 푼 문제만 고르고 프로필을 볼 때" spellcheck="false"></label>
+      <div class="sac-checks">
+        <label><input type="checkbox" id="sacUnsolved" checked> 안 푼 문제만</label>
+        <label><input type="checkbox" id="sacKo" checked> 한국어 문제만</label>
+      </div>
+    </div>
+    <div class="sac-result" id="sacResult"><span class="dim">조건을 고르고 “뽑기”를 누르세요.</span></div>
+    <div class="dlg-row"><button class="btn" id="sacPick">뽑기</button><button class="btn primary" id="sacLoad" disabled>이 문제 풀기</button></div>
+  </div>
+</div>
 
 <div class="memo-backdrop" id="memoBackdrop" hidden></div>
 <section class="memo" id="memo" hidden aria-label="메모장">
@@ -1489,6 +1534,7 @@ function bojText(p) {
   if (/\[그림\]/.test(parts.join(""))) parts.push("※ [그림]은 원문 링크에서 확인하세요.");
   return parts.join("\n\n");
 }
+
 
 
 // ---------- 이벤트 ----------
