@@ -1,7 +1,7 @@
 // Cote IDE 서비스 워커: 한 번 받은 실행 환경(Python·Java·SQLite)과 편집기 파일을 저장해 두고
 // 다음 방문부터 바로 쓴다. 페이지(index.html)는 항상 새로 받고, 인터넷이 없을 때만 저장본을 쓴다.
 // 사이트를 다시 빌드하면 CACHE 이름이 바뀌어 예전 저장본은 지워진다.
-const CACHE = "cote-f9fb119778a2";
+const CACHE = "cote-0551c877188c";
 const RUNTIME = /\/(py|java|sql)\/[^/]+$/;
 const CDN = /^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/(monaco-editor|sql\.js)\/[\d.]+\//;
 
@@ -13,6 +13,16 @@ self.addEventListener("activate", (e) => {
       .then((keys) => Promise.all(keys.filter((k) => k.startsWith("cote-") && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
+});
+
+// 첫 방문에는 서비스 워커가 자리 잡기 전에 실행 환경을 받아 버리므로, 페이지가 준비를 마친 언어의 파일 목록을 보내면
+// 아직 저장하지 않은 것만 받아 둔다 (방금 받은 파일이라 대개 브라우저 캐시에서 바로 온다)
+self.addEventListener("message", (e) => {
+  if (!e.data || e.data.type !== "precache") return;
+  e.waitUntil(caches.open(CACHE).then((cache) => Promise.all(e.data.urls.map(async (u) => {
+    if (await cache.match(u)) return;
+    try { const res = await fetch(u); if (res.ok) await cache.put(u, res); } catch { /* 다음 방문 때 다시 시도 */ }
+  }))));
 });
 
 self.addEventListener("fetch", (e) => {

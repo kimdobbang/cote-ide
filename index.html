@@ -1724,6 +1724,18 @@ $("bojPasteOk").onclick = async () => {
 // 실행 환경 파일을 브라우저에 저장해 두는 서비스 워커 (두 번째 방문부터 빠르게, 인터넷이 끊겨도 동작)
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  // 언어 준비가 끝나면 그 언어의 실행 파일을 저장해 두라고 서비스 워커에 알린다 (첫 방문 다음부터 빠르게)
+  const RUNTIME_FILES = {"py": ["py-worker.js", "pyodide.js", "pyodide.asm.js", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"], "java": ["compile-worker.js", "run-worker.js", "compiler.wasm-runtime.js", "compiler.wasm", "compile-classlib-teavm.bin", "runtime-classlib-teavm.bin"], "sql": ["sql-worker.js", "sql-wasm.wasm"]};
+  const sent = new Set();
+  RT.onStatus = (s) => {
+    renderRt();
+    for (const [lane, l] of [["python", "py"], ["java", "java"], ["sql", "sql"]]) {
+      if (s[lane] !== "ready" || sent.has(l)) continue;
+      sent.add(l);
+      navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({
+        type: "precache", urls: RUNTIME_FILES[l].map((f) => new URL(l + "/" + f, location.href).href) }));
+    }
+  };
 }
 // Monaco 로드: cdnjs (스타일은 페이지에 넣어 두었으므로 편집기 쪽 스타일 불러오기는 끈다)
 (() => {
