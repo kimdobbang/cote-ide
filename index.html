@@ -1687,9 +1687,24 @@ async function submit() {
   setBusy(true); showPane("result"); $("runMeta").textContent = "";
   $("result").innerHTML = '<div class="placeholder">채점 중...</div>';
   try {
+    // 첫 케이스로 컴파일(에러) 여부를 확인한 뒤, 나머지는 최대 4개씩 동시에 실행한다
+    const code = getCode(), results = new Array(tests.length);
+    results[0] = await api({ language: lang, code, stdin: tests[0].input });
+    if (results[0].status === "COMPILE_ERROR") results.fill(results[0]);
+    else {
+      let next = 1, done = 1;
+      const worker = async () => {
+        while (next < tests.length) {
+          const i = next++;
+          results[i] = await api({ language: lang, code, stdin: tests[i].input });
+          $("result").innerHTML = `<div class="placeholder">채점 중... (${++done} / ${tests.length})</div>`;
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, tests.length - 1) }, worker));
+    }
     let html = "", passed = 0, compileErr = null;
     for (let i = 0; i < tests.length; i++) {
-      const res = compileErr || await api({ language: lang, code: getCode(), stdin: tests[i].input });
+      const res = results[i];
       if (res.status === "COMPILE_ERROR") compileErr = res;
       const ok = res.status === "OK" && norm(res.stdout || "") === norm(tests[i].expected);
       if (ok) passed++;
@@ -1702,7 +1717,6 @@ async function submit() {
         <span class="k">입력값 〉</span><pre>${show(tests[i].input)}</pre>
         <span class="k">기댓값 〉</span><pre>${show(tests[i].expected)}</pre>
         <span class="k">실행 결과 〉</span><div>${verdict}</div></div></div>`;
-      $("result").innerHTML = html;
     }
     if (compileErr) html = `<pre class="err" style="margin-bottom:12px">${esc(compileErr.stderr)}</pre>` + html;
     const score = (passed / tests.length * 100).toFixed(1);
