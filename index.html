@@ -135,6 +135,13 @@
   .ask { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
     background: rgba(5, 10, 18, .6); padding: 16px; }
   .ask[hidden] { display: none; }
+  .paste-card { width: min(640px, 100%); }
+  .paste-card textarea { width: 100%; height: 260px; resize: vertical; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); font: 12px/1.5 var(--mono); padding: 8px 10px; outline: none; }
+  .paste-card textarea:focus, .paste-row input:focus { border-color: var(--accent); }
+  .paste-row { margin: 8px 0; }
+  .paste-row input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; outline: none; }
+  .paste-msg { font-size: 12px; min-height: 18px; margin-bottom: 8px; }
   .ask-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px;
     box-shadow: 0 12px 40px rgba(0,0,0,.45); }
   .ask-card p { margin: 0 0 16px; line-height: 1.6; white-space: pre-line; }
@@ -154,7 +161,8 @@
 <header>
   <div class="logo">cote<span>.</span>ide</div>
   <div class="sep"></div>
-  
+  <button class="btn sm" id="bojPasteBtn" title="백준 문제 페이지를 복사해 붙여넣으면 문제와 예제를 채웁니다">백준 문제 붙여넣기</button>
+  <div class="sep"></div>
   <input id="title" placeholder="문제 제목" spellcheck="false">
   <div class="timer">
     <span class="label hint">시험 시간</span>
@@ -226,6 +234,15 @@
 </footer>
 
 
+<div class="ask" id="bojPaste" hidden>
+  <div class="ask-card paste-card" role="dialog" aria-modal="true" aria-labelledby="bojPasteTitle">
+    <p id="bojPasteTitle"><b>백준 문제 붙여넣기</b><br><span class="hint">백준 문제 페이지에서 ⌘A(전체 선택) → ⌘C(복사)한 뒤 아래에 붙여넣으세요. 문제 설명과 예제가 테스트 케이스로 들어갑니다.</span></p>
+    <textarea id="bojPasteText" spellcheck="false" placeholder="여기에 붙여넣기 (⌘V)"></textarea>
+    <div class="paste-row"><input id="bojPasteId" placeholder="문제 번호 (자동 인식, 비워 두어도 됨)" spellcheck="false"></div>
+    <div class="err paste-msg" id="bojPasteMsg"></div>
+    <div class="ask-row"><button class="btn" id="bojPasteCancel">취소</button><button class="btn primary" id="bojPasteOk">불러오기</button></div>
+  </div>
+</div>
 <div class="ask" id="ask" hidden>
   <div class="ask-card" role="dialog" aria-modal="true" aria-labelledby="askMsg">
     <p id="askMsg"></p>
@@ -1370,6 +1387,36 @@ public class Main {
 };
 function untouchedStdin(l, code) { return code === TEMPLATES[l] || OLD_STDIN[l].includes(code); }
 
+// 예제를 모두 통과하면: 코드를 복사하고 백준 제출 페이지를 새 탭으로 연다 (로그인·제출은 사용자가 직접)
+$("result").addEventListener("click", async (e) => {
+  const b = e.target.closest('[data-act="boj-submit"]');
+  if (!b) return;
+  let copied = true;
+  try { await navigator.clipboard.writeText(getCode()); } catch { copied = false; }
+  window.open(`https://www.acmicpc.net/submit/${b.dataset.id}`, "_blank", "noopener");
+  $("judgeMsg").textContent = copied
+    ? `코드를 복사했습니다. 열린 페이지에서 언어(${lang === "java" ? "Java 11" : "Python 3"})를 고르고 붙여넣은 뒤 제출하세요.`
+    : "코드 복사에 실패했습니다. 편집기에서 직접 복사해 붙여넣으세요.";
+});
+
+// 백준은 반환값 없이 main에서 입력을 읽고 출력한다. 불러오면 표준 입출력 코드를 빈 기본 코드로 바꾼다.
+const stdinCode = (l) => models["code:" + l] ? models["code:" + l].getValue()
+  : !monacoRef && l === lang && !isFunc() ? editor.getValue() : store.get("code:" + l, TEMPLATES[l]);
+function setStdinCode(l, v) {
+  store.set("code:" + l, v);
+  if (models["code:" + l]) models["code:" + l].setValue(v);
+}
+
+function bojText(p) {
+  const parts = [`${p.id}번 ${p.title}  (시간 제한 ${p.timeLimit} · 메모리 제한 ${p.memoryLimit})`, p.url];
+  const sec = (name, body) => { if (body) parts.push(`[${name}]\n${body}`); };
+  sec("문제", p.description); sec("입력", p.input); sec("출력", p.output); sec("제한", p.limit);
+  p.samples.forEach((s, i) => { sec(`예제 입력 ${i + 1}`, s.input.replace(/\n$/, "")); sec(`예제 출력 ${i + 1}`, s.output.replace(/\n$/, "")); });
+  sec("힌트", p.hint);
+  if (/\[그림\]/.test(parts.join(""))) parts.push("※ [그림]은 원문 링크에서 확인하세요.");
+  return parts.join("\n\n");
+}
+
 
 // ---------- 이벤트 ----------
 $("lang").onchange = (e) => setLang(e.target.value);
@@ -1409,6 +1456,109 @@ function splitter(gutter, target, axis, key, min, max) {
 }
 splitter($("vgutter"), $("left"), "x", "splitX", 20, 65);
 splitter($("hgutter"), $("bottom"), "y", "splitY", 15, 75);
+
+// ---------- 백준 문제 붙여넣기 (웹 버전 전용) ----------
+// 백준은 다른 사이트에서 문제 페이지를 읽지 못하게 막아 두어서, 사용자가 문제 페이지 전체를 복사해
+// 붙여넣으면 그 글에서 제목·제한·본문·예제를 찾아 채운다.
+function parseBojText(text, idHint) {
+  const lines = text.replace(/\r\n?/g, "\n").replace(/ /g, " ").split("\n");
+  const at = (re, from = 0) => { for (let i = from; i < lines.length; i++) if (re.test(lines[i].trim())) return i; return -1; };
+  const H = {
+    problem: /^(문제|Problem)$/, input: /^(입력|Input)$/, output: /^(출력|Output)$/, limit: /^(제한|Constraints?)$/,
+    subtask: /^(서브태스크|Subtasks?)$/, hint: /^(힌트|노트|Hint|Notes?)$/,
+    sampleIn: /^(?:예제 입력|Sample Input)\s*(\d+)/, sampleOut: /^(?:예제 출력|Sample Output)\s*(\d+)/,
+    end: /^(출처|알고리즘 분류|채점 및 기타 정보|메모|Source|Algorithm|Judging|Notes)$/,
+  };
+  const isHeading = (s) => Object.values(H).some((re) => re.test(s.trim()));
+
+  // 제목·번호·제한: "시간 제한 / 메모리 제한" 표 머리줄을 기준으로 찾는다
+  const tableAt = at(/^(시간 제한|Time Limit)\t/);
+  let timeLimit = "", memoryLimit = "", title = "";
+  if (tableAt >= 0 && lines[tableAt + 1]) [timeLimit, memoryLimit] = lines[tableAt + 1].split("\t").map((s) => s.trim());
+  if (tableAt > 0) {
+    title = lines[tableAt - 1].trim();
+    // 제목 뒤에 붙는 문제 성격 표시 떼기 (예: "방 배정 서브태스크")
+    const TAGS = /\s*(서브태스크|스페셜 저지|다국어|부분 점수|함수 구현|언어 제한|출력 형식|점수|Subtask|Special Judge|Multilingual)$/;
+    while (TAGS.test(title)) title = title.replace(TAGS, "");
+  }
+  const idMatch = text.match(/(\d{3,6})번/);
+  const id = String(idHint || "").match(/\d+/)?.[0] || (idMatch && idMatch[1]) || "";
+
+  // 본문 섹션: 제목 표 아래의 "문제" 머리줄부터 시작한다 (위쪽 메뉴의 "문제" 글자와 구분)
+  const start = at(H.problem, Math.max(0, tableAt));
+  const section = (re) => {
+    const s = at(re, Math.max(0, start));
+    if (s < 0) return "";
+    let e = s + 1;
+    while (e < lines.length && !isHeading(lines[e])) e++;
+    return lines.slice(s + 1, e).join("\n").replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  };
+
+  // 예제: "예제 입력 k" ~ "예제 출력 k" 사이, "예제 출력 k" ~ 다음 머리줄 사이
+  const samples = [];
+  for (let k = 1; k < 100; k++) {
+    const si = lines.findIndex((l) => { const m = l.trim().match(H.sampleIn); return m && +m[1] === k; });
+    if (si < 0) break;
+    const so = lines.findIndex((l, i) => { if (i <= si) return false; const m = l.trim().match(H.sampleOut); return m && +m[1] === k; });
+    if (so < 0) break;
+    let oe = so + 1;
+    while (oe < lines.length && !isHeading(lines[oe])) oe++;
+    const block = (a, b) => {
+      const body = lines.slice(a, b);
+      while (body.length && !body[body.length - 1].trim()) body.pop();
+      while (body.length && !body[0].trim()) body.shift();
+      return body.map((l) => l.replace(/\s+$/, "")).join("\n") + "\n";
+    };
+    samples.push({ input: block(si + 1, so), output: block(so + 1, oe) });
+  }
+
+  return {
+    id, title, timeLimit, memoryLimit,
+    url: id ? `https://www.acmicpc.net/problem/${id}` : "",
+    description: section(H.problem), input: section(H.input), output: section(H.output),
+    limit: section(H.limit), hint: section(H.hint), samples,
+  };
+}
+
+function bojPasteText(p) {
+  const head = [p.id ? `${p.id}번` : "", p.title].filter(Boolean).join(" ") +
+    (p.timeLimit ? `  (시간 제한 ${p.timeLimit} · 메모리 제한 ${p.memoryLimit})` : "");
+  const parts = [head, p.url].filter(Boolean);
+  const sec = (name, body) => { if (body) parts.push(`[${name}]\n${body}`); };
+  sec("문제", p.description); sec("입력", p.input); sec("출력", p.output); sec("제한", p.limit);
+  p.samples.forEach((s, i) => { sec(`예제 입력 ${i + 1}`, s.input.replace(/\n$/, "")); sec(`예제 출력 ${i + 1}`, s.output.replace(/\n$/, "")); });
+  sec("힌트", p.hint);
+  return parts.join("\n\n");
+}
+
+$("bojPasteBtn").onclick = () => {
+  $("bojPasteText").value = ""; $("bojPasteId").value = ""; $("bojPasteMsg").textContent = "";
+  $("bojPaste").hidden = false; $("bojPasteText").focus();
+};
+$("bojPasteCancel").onclick = () => { $("bojPaste").hidden = true; };
+$("bojPasteOk").onclick = async () => {
+  const p = parseBojText($("bojPasteText").value, $("bojPasteId").value);
+  if (!p.samples.length) {
+    $("bojPasteMsg").textContent = "예제 입력/출력을 찾지 못했습니다. 백준 문제 페이지에서 ⌘A(전체 선택) → ⌘C로 복사해 붙여넣으세요.";
+    return;
+  }
+  const written = ["python", "java"].some((l) => !untouchedStdin(l, stdinCode(l)));
+  $("bojPaste").hidden = true;
+  if (($("problem").value.trim() || written) &&
+      !(await ask("현재 문제 설명, 테스트 케이스, 표준 입출력 코드를 새 문제로 바꿀까요?\n(solution 함수 방식 코드는 그대로 둡니다)"))) return;
+  $("title").value = [p.id && p.id + ".", p.title].filter(Boolean).join(" "); store.set("title", $("title").value);
+  $("problem").value = bojPasteText(p); $("problem").scrollTop = 0; store.set("problem", $("problem").value);
+  const tests = p.samples.map((s) => ({ input: s.input, expected: s.output }));
+  for (const l of ["python", "java"]) {
+    store.set("tests:" + l, tests);
+    store.set("stdin:" + l, p.samples[0].input);
+    setStdinCode(l, TEMPLATES[l]);
+  }
+  store.set("boj", p.id || null);
+  if (lang === "sql") lang = "python", store.set("lang", lang);
+  mode = "stdin"; store.set("mode", mode);
+  refresh(); showPane("tc");
+};
 
 // Monaco 로드: cdnjs (스타일은 페이지에 넣어 두었으므로 편집기 쪽 스타일 불러오기는 끈다)
 (() => {
